@@ -6,7 +6,8 @@ import pytorch_lightning as pl
 from torch import nn
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
-from panaf.datamodules import SupervisedPanAfDataModule
+# from panaf.datamodules import SupervisedPanAfDataModule as DataModule
+from panaf.datamodules import SupervisedMothsDataModule as DataModule
 from src.supervised.models import (
     SoftmaxEmbedderResNet50,
     TemporalSoftmaxEmbedderResNet50,
@@ -22,17 +23,17 @@ from configparser import NoOptionError
 
 class ActionClassifier(pl.LightningModule):
     def __init__(
-        self, lr, weight_decay, model_name, freeze_backbone, margin, type_of_triplets
+        self, n_classes, lr, weight_decay, model_name, freeze_backbone, margin, type_of_triplets
     ):
         super().__init__()
 
         self.save_hyperparameters()
 
         self.model = initialise_triplet_model(
-            name=model_name, freeze_backbone=freeze_backbone
+            name=model_name, freeze_backbone=freeze_backbone, out_features=n_classes,
         )
 
-        self.classifier = KNeighborsClassifier(n_neighbors=9)
+        self.classifier = KNeighborsClassifier(n_neighbors=n_classes)
 
         self.triplet_miner = TripletMarginMiner(
             margin=margin, type_of_triplets=type_of_triplets
@@ -43,16 +44,16 @@ class ActionClassifier(pl.LightningModule):
         # Training metrics
         self.train_top1_acc = torchmetrics.Accuracy(top_k=1)
         self.train_avg_per_class_acc = torchmetrics.Accuracy(
-            num_classes=9, average="macro"
+            num_classes=n_classes, average="macro"
         )
-        self.train_per_class_acc = torchmetrics.Accuracy(num_classes=9, average="none")
+        self.train_per_class_acc = torchmetrics.Accuracy(num_classes=n_classes, average="none")
 
         # Validation metrics
         self.val_top1_acc = torchmetrics.Accuracy(top_k=1)
         self.val_avg_per_class_acc = torchmetrics.Accuracy(
-            num_classes=9, average="macro"
+            num_classes=n_classes, average="macro"
         )
-        self.val_per_class_acc = torchmetrics.Accuracy(num_classes=9, average="none")
+        self.val_per_class_acc = torchmetrics.Accuracy(num_classes=n_classes, average="none")
 
     def forward(self, x):
         emb, pred = self.model(x)
@@ -176,13 +177,14 @@ def main():
     cfg = configparser.ConfigParser()
     cfg.read(args.config)
 
-    data_module = SupervisedPanAfDataModule(cfg=cfg)
+    data_module = DataModule(cfg=cfg)
 
     data_type = cfg.get("dataset", "type")
     margin = cfg.getfloat("triplets", "margin")
     type_of_triplets = cfg.get("triplets", "type_of_triplets")
 
     model = ActionClassifier(
+        n_classes=cfg.getint("model", "n_classes"),
         lr=cfg.getfloat("hparams", "lr"),
         weight_decay=cfg.getfloat("hparams", "weight_decay"),
         model_name=cfg.get("dataset", "type"),
@@ -230,7 +232,7 @@ def main():
                 max_epochs=cfg.getint("trainer", "max_epochs"),
                 stochastic_weight_avg=cfg.getboolean("trainer", "swa"),
                 logger=wand_logger,
-                fast_dev_run=10,
+                fast_dev_run=False,
             )
     else:
         trainer = pl.Trainer(
@@ -239,7 +241,8 @@ def main():
             strategy=cfg.get("trainer", "strategy"),
             max_epochs=cfg.getint("trainer", "max_epochs"),
             stochastic_weight_avg=cfg.getboolean("trainer", "swa"),
-            fast_dev_run=10,
+            logger=wand_logger,
+            fast_dev_run=False,
         )
     trainer.fit(model=model, datamodule=data_module)
 
