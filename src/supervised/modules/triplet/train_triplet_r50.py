@@ -22,8 +22,14 @@ from configparser import NoOptionError
 
 
 class ActionClassifier(pl.LightningModule):
-    def __init__(
-        self, n_classes, lr, weight_decay, model_name, freeze_backbone, margin, type_of_triplets
+    def __init__(self, n_classes, *
+        lr,
+        label_smoothing,
+        weight_decay,
+        model_name,
+        freeze_backbone,
+        margin,
+        type_of_triplets,
     ):
         super().__init__()
 
@@ -39,7 +45,8 @@ class ActionClassifier(pl.LightningModule):
             margin=margin, type_of_triplets=type_of_triplets
         )
         self.triplet_loss = OnlineReciprocalTripletLoss()  # self.selector
-        self.ce_loss = nn.CrossEntropyLoss()
+        self.ce_loss = nn.CrossEntropyLoss(
+            label_smoothing=label_smoothing)
 
         # Training metrics
         self.train_top1_acc = torchmetrics.Accuracy(top_k=1)
@@ -160,9 +167,10 @@ class ActionClassifier(pl.LightningModule):
         )
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(
+        optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.hparams.lr,
+            eps=1e-2,
             weight_decay=self.hparams.weight_decay,
         )
         return optimizer
@@ -186,6 +194,7 @@ def main():
     model = ActionClassifier(
         n_classes=cfg.getint("model", "n_classes"),
         lr=cfg.getfloat("hparams", "lr"),
+        label_smoothing=cfg.getfloat("hparams", "label_smoothing"),
         weight_decay=cfg.getfloat("hparams", "weight_decay"),
         model_name=cfg.get("dataset", "type"),
         freeze_backbone=cfg.getboolean("hparams", "freeze_backbone"),
